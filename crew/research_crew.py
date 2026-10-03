@@ -11,20 +11,24 @@ from agents.fact_checker_agent import create_fact_checker_agent
 from agents.writer_agent import create_writer_agent
 
 
-GROQ_MODEL = "openai/gpt-oss-120b"
+# =========================================================
+# GROQ MODEL
+# =========================================================
+
+GROQ_MODEL = "openai/gpt-oss-20b"
 
 
 # =========================================================
-# GROQ + CREWAI LLM
+# CUSTOM GROQ LLM FOR CREWAI
 # =========================================================
 
 class GroqCrewLLM(BaseLLM):
     """
     Custom CrewAI LLM adapter for Groq.
 
-    The adapter removes CrewAI's internal
-    'cache_breakpoint' marker before sending messages
-    to Groq because Groq does not accept that property.
+    This adapter removes CrewAI's internal
+    cache_breakpoint field before messages are
+    sent to Groq.
     """
 
     def __init__(
@@ -41,7 +45,8 @@ class GroqCrewLLM(BaseLLM):
 
         if not api_key:
             raise ValueError(
-                "GROQ_API_KEY is not configured."
+                "GROQ_API_KEY is not configured. "
+                "Please add it to Streamlit Secrets."
             )
 
         self.client = Groq(
@@ -49,15 +54,11 @@ class GroqCrewLLM(BaseLLM):
         )
 
     # =====================================================
-    # REMOVE CREWAI CACHE MARKER
+    # CLEAN CREWAI MESSAGES
     # =====================================================
 
     @staticmethod
     def _clean_messages(messages):
-        """
-        Remove CrewAI's cache_breakpoint field
-        before sending messages to Groq.
-        """
 
         cleaned_messages = []
 
@@ -76,12 +77,15 @@ class GroqCrewLLM(BaseLLM):
                 )
 
             else:
-                cleaned_messages.append(message)
+
+                cleaned_messages.append(
+                    message
+                )
 
         return cleaned_messages
 
     # =====================================================
-    # GROQ CALL
+    # CALL GROQ
     # =====================================================
 
     def call(
@@ -92,15 +96,10 @@ class GroqCrewLLM(BaseLLM):
         available_functions=None,
         **kwargs: Any,
     ):
-        """
-        Send CrewAI messages to Groq.
-        """
 
-        # -------------------------------------------------
-        # Convert string input into message format
-        # -------------------------------------------------
-
+        # Convert string input into a message
         if isinstance(messages, str):
+
             messages = [
                 {
                     "role": "user",
@@ -108,59 +107,41 @@ class GroqCrewLLM(BaseLLM):
                 }
             ]
 
-        # -------------------------------------------------
-        # IMPORTANT:
-        # Remove cache_breakpoint before Groq API call
-        # -------------------------------------------------
-
+        # Remove unsupported CrewAI field
         messages = self._clean_messages(
             messages
         )
 
-        # -------------------------------------------------
-        # Build Groq request
-        # -------------------------------------------------
-
+        # Groq request
         request = {
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature,
-            "max_completion_tokens": 8192,
+            "max_completion_tokens": 4096,
             "reasoning_effort": "low",
         }
 
-        # -------------------------------------------------
-        # Add CrewAI tools when available
-        # -------------------------------------------------
-
+        # Add tools when CrewAI provides them
         if tools:
 
             request["tools"] = tools
             request["tool_choice"] = "auto"
 
-        # -------------------------------------------------
-        # Call Groq
-        # -------------------------------------------------
-
+        # Send request to Groq
         response = self.client.chat.completions.create(
             **request
         )
 
         message = response.choices[0].message
 
-        # -------------------------------------------------
-        # Return tool calls if model requested them
-        # -------------------------------------------------
-
+        # Return tool calls when available
         if message.tool_calls:
+
             return list(
                 message.tool_calls
             )
 
-        # -------------------------------------------------
-        # Return normal text response
-        # -------------------------------------------------
-
+        # Otherwise return normal text
         return message.content or ""
 
     # =====================================================
@@ -183,11 +164,12 @@ class GroqCrewLLM(BaseLLM):
 
 def create_research_crew() -> Crew:
 
+    # Create Groq LLM
     llm = GroqCrewLLM()
 
-    # -----------------------------------------------------
+    # =====================================================
     # CREATE AGENTS
-    # -----------------------------------------------------
+    # =====================================================
 
     planner = create_planner_agent(
         llm
@@ -210,21 +192,26 @@ def create_research_crew() -> Crew:
     # =====================================================
 
     planning_task = Task(
+
         description=(
-            "Create a detailed research plan for the "
-            "following research question:\n\n"
+            "Create a clear and practical research plan "
+            "for the following research question:\n\n"
 
             "{research_question}\n\n"
 
-            "Use the Research Planning Tool to identify "
-            "important research areas, subtopics, evidence "
-            "requirements, and source priorities."
+            "Use the Research Planning Tool to identify:\n"
+            "- main research areas\n"
+            "- important subtopics\n"
+            "- evidence requirements\n"
+            "- useful source types\n\n"
+
+            "Keep the plan focused and concise."
         ),
 
         expected_output=(
             "A structured research plan containing the "
-            "main research areas, subtopics, evidence "
-            "requirements, and source priorities."
+            "main research areas, important subtopics, "
+            "evidence requirements, and source priorities."
         ),
 
         agent=planner,
@@ -235,29 +222,37 @@ def create_research_crew() -> Crew:
     # =====================================================
 
     research_task = Task(
+
         description=(
-            "Conduct web research based on the research "
-            "plan created by the Research Planning Specialist.\n\n"
+            "Conduct research based on the research plan "
+            "created by the Research Planning Specialist.\n\n"
 
             "Original research question:\n"
             "{research_question}\n\n"
 
-            "Use the Web Research Tool to collect current "
-            "and relevant evidence.\n\n"
+            "Use the Web Research Tool to collect relevant "
+            "and current information.\n\n"
 
-            "Prefer authoritative sources, academic sources, "
-            "government sources, universities, institutional "
-            "reports, and reputable organizations.\n\n"
+            "Prefer:\n"
+            "- academic sources\n"
+            "- government sources\n"
+            "- universities\n"
+            "- official organizations\n"
+            "- reputable research sources\n\n"
 
-            "Provide source names and URLs when available.\n\n"
+            "Record useful source names and URLs when "
+            "available.\n\n"
 
-            "Do not invent citations, statistics, or sources."
+            "Do not invent citations, statistics, facts, "
+            "or sources.\n\n"
+
+            "Keep the research focused on the question."
         ),
 
         expected_output=(
-            "Detailed research findings organized by topic, "
-            "including evidence, important facts, dates where "
-            "relevant, and source references."
+            "Research findings organized by topic, "
+            "including important facts, evidence, "
+            "dates where relevant, and source references."
         ),
 
         agent=researcher,
@@ -272,33 +267,35 @@ def create_research_crew() -> Crew:
     # =====================================================
 
     fact_check_task = Task(
+
         description=(
-            "Fact-check the research findings produced by "
-            "the Web Research Specialist.\n\n"
+            "Fact-check the research findings produced "
+            "by the Web Research Specialist.\n\n"
 
             "Original research question:\n"
             "{research_question}\n\n"
 
-            "Use both the Source Analyzer Tool and the "
-            "Web Research Tool.\n\n"
+            "Use the Source Analyzer Tool and Web Research "
+            "Tool when appropriate.\n\n"
 
-            "Identify:\n"
+            "Check for:\n"
             "- unsupported claims\n"
             "- weak evidence\n"
             "- outdated information\n"
             "- conflicting findings\n"
             "- questionable statistics\n"
-            "- claims requiring additional verification\n\n"
+            "- claims requiring verification\n\n"
 
-            "Do not accept a claim simply because it appears "
-            "in the research findings."
+            "Clearly identify information that is uncertain.\n\n"
+
+            "Do not invent evidence."
         ),
 
         expected_output=(
-            "A fact-checking report containing verified "
-            "findings, claims requiring caution, source-quality "
-            "observations, contradictions, uncertainties, "
-            "and recommended evidence."
+            "A concise fact-checking report containing "
+            "verified findings, questionable claims, "
+            "source-quality observations, contradictions, "
+            "uncertainties, and evidence that requires caution."
         ),
 
         agent=fact_checker,
@@ -313,16 +310,21 @@ def create_research_crew() -> Crew:
     # =====================================================
 
     writing_task = Task(
+
         description=(
-            "Write the final research report using ONLY the "
+            "Write the final research report using the "
             "research findings and fact-checking results "
-            "provided by the previous agents.\n\n"
+            "from the previous agents.\n\n"
 
             "Original research question:\n"
             "{research_question}\n\n"
 
-            "The report must be balanced, evidence-based, "
-            "clear, professional, and easy to read.\n\n"
+            "The report must be:\n"
+            "- clear\n"
+            "- professional\n"
+            "- evidence-based\n"
+            "- balanced\n"
+            "- easy to read\n\n"
 
             "Use this structure:\n\n"
 
@@ -336,20 +338,24 @@ def create_research_crew() -> Crew:
             "8. Conclusion\n"
             "9. Sources\n\n"
 
-            "Do not invent information or citations."
+            "Use only information supported by the previous "
+            "agent outputs.\n\n"
+
+            "Do not invent facts, statistics, or citations."
         ),
 
         expected_output=(
             "A complete professional research report with "
-            "clear sections, evidence-based findings, "
-            "limitations, conclusion, and source references."
+            "a title, executive summary, introduction, "
+            "key findings, evidence, perspectives, "
+            "limitations, conclusion, and sources."
         ),
 
         agent=writer,
 
         context=[
             research_task,
-            fact_check_task,
+            fact_check_task
         ],
     )
 
@@ -358,6 +364,7 @@ def create_research_crew() -> Crew:
     # =====================================================
 
     crew = Crew(
+
         agents=[
             planner,
             researcher,
@@ -388,8 +395,14 @@ def run_research(
     research_question: str
 ):
 
-    if not research_question or not research_question.strip():
+    if not research_question:
+        raise ValueError(
+            "Please enter a research question."
+        )
 
+    research_question = research_question.strip()
+
+    if not research_question:
         raise ValueError(
             "Please enter a research question."
         )
@@ -398,8 +411,7 @@ def run_research(
 
     result = crew.kickoff(
         inputs={
-            "research_question":
-                research_question.strip()
+            "research_question": research_question
         }
     )
 
